@@ -45,6 +45,8 @@ void ContinuousDetector::onInit ()
   tag_detector_ = std::shared_ptr<TagDetector>(new TagDetector(pnh));
   draw_tag_detections_image_ = getAprilTagOption<bool>(pnh, 
       "publish_tag_detections_image", false);
+  global_frame_id_ = getAprilTagOption<std::string>(pnh,
+      "global_frame_id", "odom");
   it_ = std::shared_ptr<image_transport::ImageTransport>(
       new image_transport::ImageTransport(nh));
 
@@ -59,6 +61,8 @@ void ContinuousDetector::onInit ()
                           image_transport::TransportHints(transport_hint));
   tag_detections_publisher_ =
       nh.advertise<AprilTagDetectionArray>("tag_detections", 1);
+  pose_pub_ = 
+      nh.advertise<geometry_msgs::PoseStamped>("tag_pose", 1);
   if (draw_tag_detections_image_)
   {
     tag_detections_image_publisher_ = it_->advertise("tag_detections_image", 1);
@@ -67,6 +71,15 @@ void ContinuousDetector::onInit ()
   refresh_params_service_ =
       pnh.advertiseService("refresh_tag_params", 
                           &ContinuousDetector::refreshParamsCallback, this);
+  activate_service_ = 
+      nh.advertiseService("set_marker_detect",
+                          &ContinuousDetector::activateCallback, this);
+  tf2_ros::TransformListener tfListener(tf_buffer_);
+  ros::Timer timer = 
+      nh.createTimer(ros::Duration(0.1), 
+                          &ContinuousDetector::tf_listener_thread, this);
+  detection_ = false;
+  ros::spin();
 }
 
 void ContinuousDetector::refreshTagParameters()
@@ -86,6 +99,19 @@ bool ContinuousDetector::refreshParamsCallback(std_srvs::Empty::Request& req,
   return true;
 }
 
+bool ContinuousDetector::activateCallback(std_srvs::SetBool::Request& req,
+                                          std_srvs::SetBool::Response& res)
+{
+  activate_ = req.data;
+  if (activate_) {
+    ros::NodeHandle private_nh("");
+    private_nh.setParam("reset_marker", true);
+  }
+  res.success = true;
+  res.message = "set activate to %s" + (std::ostringstream() << std::boolalpha << req.data).str();
+  return true;
+}
+
 void ContinuousDetector::imageCallback (
     const sensor_msgs::ImageConstPtr& image_rect,
     const sensor_msgs::CameraInfoConstPtr& camera_info)
@@ -94,6 +120,9 @@ void ContinuousDetector::imageCallback (
   // Lazy updates:
   // When there are no subscribers _and_ when tf is not published,
   // skip detection.
+  if (!activate_) return;
+  ros::Time st, et;
+  st = ros::Time::now();
   if (tag_detections_publisher_.getNumSubscribers() == 0 &&
       tag_detections_image_publisher_.getNumSubscribers() == 0 &&
       !tag_detector_->get_publish_tf())
@@ -115,9 +144,11 @@ void ContinuousDetector::imageCallback (
   }
 
   // Publish detected tags in the image by AprilTag 2
-  tag_detections_publisher_.publish(
-      tag_detector_->detectTags(cv_image_,camera_info));
-
+  tag_detection_array_.detections.clear();
+  tag_detection_array_ = tag_detector_->detectTags(cv_image_,camera_info);
+  // tag_detections_publisher_.publish(
+  //     tag_detection_array_);
+  detection_ = true;
   // Publish the camera image overlaid by outlines of the detected tags and
   // their payload values
   if (draw_tag_detections_image_)
@@ -125,6 +156,50 @@ void ContinuousDetector::imageCallback (
     tag_detector_->drawDetections(cv_image_);
     tag_detections_image_publisher_.publish(cv_image_->toImageMsg());
   }
+  et = ros::Time::now();
+  ros::Duration ct = et-st;
+  ROS_DEBUG("[ImageCallback] cycle time : %f", ct.toSec());
+}
+
+void ContinuousDetector::tf_listener_thread(const ros::TimerEvent&) {
+  std::scoped_lock<std::mutex> lock(detection_mutex_);
+  if (!detection_ || !activate_){
+    return;
+  }
+  ros::Time st, et;
+  st = ros::Time::now();
+  AprilTagDetectionArray transformed_tag_array;
+  transformed_tag_array = tag_detection_array_;
+  transformed_tag_array.header.frame_id = global_frame_id_;
+  if (tag_detection_array_.detections.empty()) return;
+  for (unsigned int i=0; i < tag_detection_array_.detections.size(); i++){
+    std::string tag_id = "tag_" + std::to_string(tag_detection_array_.detections[i].id[0]);
+    try {
+      poseTransform_ = tf_buffer_.lookupTransform(global_frame_id_, tag_id,
+          ros::Time(0), ros::Duration(0));
+    } catch (tf2::TransformException &ex) {
+      ROS_WARN("[TfTransform] %s", ex.what());
+      detection_ = false;
+      return;
+    }
+    geometry_msgs::PoseStamped in_target_pose, out_target_pose;
+    in_target_pose.pose.orientation.w = 1.0;
+    try{
+      tf2::doTransform(in_target_pose, out_target_pose, poseTransform_);
+      transformed_tag_array.detections[i].pose.header.frame_id = tag_id;
+      transformed_tag_array.detections[i].pose.pose.pose = out_target_pose.pose;
+      pose_pub_.publish(out_target_pose);
+    } catch (tf2::TransformException &ex) {
+      ROS_WARN("[doTransform] %s", ex.what());
+      break;
+    }
+  }
+  tag_detections_publisher_.publish(
+      transformed_tag_array);
+  detection_ = false;
+  et = ros::Time::now();
+  ros::Duration ct = et-st;
+  ROS_DEBUG("[loopThread] cycle time : %f", ct.toSec());
 }
 
 } // namespace apriltag_ros

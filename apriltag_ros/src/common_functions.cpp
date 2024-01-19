@@ -53,7 +53,8 @@ TagDetector::TagDetector(ros::NodeHandle pnh) :
     refine_edges_(getAprilTagOption<int>(pnh, "tag_refine_edges", 1)),
     debug_(getAprilTagOption<int>(pnh, "tag_debug", 0)),
     max_hamming_distance_(getAprilTagOption<int>(pnh, "max_hamming_dist", 2)),
-    publish_tf_(getAprilTagOption<bool>(pnh, "publish_tf", false))
+    publish_tf_(getAprilTagOption<bool>(pnh, "publish_tf", false)),
+    global_frame_id_(getAprilTagOption<std::string>(pnh, "global_frame_id", "odom"))
 {
   // Parse standalone tag descriptions specified by user (stored on ROS
   // parameter server)
@@ -344,6 +345,8 @@ AprilTagDetectionArray TagDetector::detectTags (
     Eigen::Isometry3d transform = getRelativeTransform(standaloneTagObjectPoints,
                                                      standaloneTagImagePoints,
                                                      fx, fy, cx, cy);
+    transform = rotateAboutAxis(transform, Eigen::Vector3d(1, 0, 0), -M_PI / 2);
+    transform = rotateAboutAxis(transform, Eigen::Vector3d(0, 0, 1), M_PI / 2);
     geometry_msgs::PoseWithCovarianceStamped tag_pose =
         makeTagPose(transform, image->header);
 
@@ -406,6 +409,16 @@ AprilTagDetectionArray TagDetector::detectTags (
   }
 
   return tag_detection_array;
+}
+
+Eigen::Isometry3d TagDetector::rotateAboutAxis(const Eigen::Isometry3d& originalTransform, 
+                                  const Eigen::Vector3d& axis, 
+                                  double angle) 
+{
+    Eigen::AngleAxisd rotation(angle, axis.normalized());
+    Eigen::Isometry3d rotatedTransform = originalTransform;
+    rotatedTransform.rotate(rotation);
+    return rotatedTransform;
 }
 
 int TagDetector::idComparison (const void* first, const void* second)
