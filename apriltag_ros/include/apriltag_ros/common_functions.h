@@ -63,6 +63,13 @@
 #include <sensor_msgs/image_encodings.h>
 #include <tf/transform_broadcaster.h>
 
+#include <geometry_msgs/TransformStamped.h>
+#include <geometry_msgs/PoseStamped.h>
+#include <tf2_ros/transform_listener.h>
+#include <tf2/LinearMath/Vector3.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2/LinearMath/Transform.h>
 #include <apriltag.h>
 
 #include "apriltag_ros/AprilTagDetection.h"
@@ -164,6 +171,7 @@ class TagDetector
 
   // AprilTag 2 code's attributes
   std::string family_;
+  std::string global_frame_id_;
   int threads_;
   double decimate_;
   double blur_;
@@ -234,7 +242,9 @@ class TagDetector
 
   // Draw the detected tags' outlines and payload values on the image
   void drawDetections(cv_bridge::CvImagePtr image);
-
+  Eigen::Isometry3d rotateAboutAxis(const Eigen::Isometry3d& originalTransform, 
+                                  const Eigen::Vector3d& axis, 
+                                  double angle);
   bool get_publish_tf() const { return publish_tf_; }
 };
 

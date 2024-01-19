@@ -47,10 +47,14 @@
 
 #include <memory>
 #include <mutex>
+#include <thread>
 
 #include <nodelet/nodelet.h>
 #include <ros/service_server.h>
 #include <std_srvs/Empty.h>
+#include <std_srvs/SetBool.h>
+#include <tf2_ros/transform_listener.h>
+#include <geometry_msgs/TransformStamped.h>
 
 namespace apriltag_ros
 {
@@ -67,20 +71,33 @@ class ContinuousDetector: public nodelet::Nodelet
                      const sensor_msgs::CameraInfoConstPtr& camera_info);
 
   void refreshTagParameters();
+  void tf_listener_thread(const ros::TimerEvent&);
 
  private:
   std::mutex detection_mutex_;
   std::shared_ptr<TagDetector> tag_detector_;
   bool draw_tag_detections_image_;
   cv_bridge::CvImagePtr cv_image_;
+  std::string global_frame_id_;
+
+  bool activate_;
+  bool detection_;
+  AprilTagDetectionArray tag_detection_array_;
 
   std::shared_ptr<image_transport::ImageTransport> it_;
   image_transport::CameraSubscriber camera_image_subscriber_;
   image_transport::Publisher tag_detections_image_publisher_;
   ros::Publisher tag_detections_publisher_;
+  ros::Publisher pose_pub_;
+  // TF buffers
+  tf2_ros::Buffer tf_buffer_;
+  geometry_msgs::TransformStamped poseTransform_;
 
   ros::ServiceServer refresh_params_service_;
+  ros::ServiceServer activate_service_;
   bool refreshParamsCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res);
+  bool activateCallback(std_srvs::SetBool::Request& req, std_srvs::SetBool::Response& res);
+
 };
 
 } // namespace apriltag_ros

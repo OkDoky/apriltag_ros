@@ -32,6 +32,7 @@
 #include <ros/ros.h>
 
 #include <nodelet/loader.h>
+#include <tf2_ros/transform_listener.h>
 
 int main(int argc, char **argv)
 {
