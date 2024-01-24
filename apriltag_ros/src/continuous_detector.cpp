@@ -108,7 +108,7 @@ bool ContinuousDetector::activateCallback(std_srvs::SetBool::Request& req,
     private_nh.setParam("reset_marker", true);
   }
   res.success = true;
-  res.message = "set activate to %s" + (std::ostringstream() << std::boolalpha << req.data).str();
+  res.message = "success";
   return true;
 }
 
